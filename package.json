@@ -1,0 +1,42 @@
+{
+  "name": "artmo-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ARTMO API: mood sentence to public-domain painting recommendation",
+  "type": "commonjs",
+  "main": "dist/server.js",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "scripts": {
+    "dev": "tsx watch server.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "test": "jest --runInBand && npm run test:sql",
+    "test:sql": "node --import tsx --test tests/schema.postgres.ts",
+    "collect:artworks": "tsx scripts/collect-artworks.ts",
+    "db:check": "tsx scripts/check-db.ts"
+  },
+  "dependencies": {
+    "@google/genai": "3.6.1",
+    "@supabase/supabase-js": "2.118.0",
+    "cors": "2.8.5",
+    "dotenv": "17.2.2",
+    "express": "5.1.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.14",
+    "@types/cors": "2.8.19",
+    "@types/emscripten": "1.41.6",
+    "@types/express": "5.0.6",
+    "@types/jest": "29.5.14",
+    "@types/node": "22.20.5",
+    "@types/supertest": "6.0.3",
+    "jest": "29.7.0",
+    "supertest": "7.1.4",
+    "ts-jest": "29.4.15",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}
