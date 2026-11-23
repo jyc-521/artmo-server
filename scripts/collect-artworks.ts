@@ -74,10 +74,11 @@ async function* metPaintings(): AsyncGenerator<Found> {
 async function* aicPaintings(): AsyncGenerator<Found> {
   for (const boosted of [true, false]) {
     for (let page = 1; page <= 20; page++) {
-      const filter: unknown[] = [{ term: { is_public_domain: true } }, { term: { artwork_type_title: "Painting" } }, { exists: { field: "image_id" } }];
+      // artwork_type_title은 분석되는 텍스트 필드라 term("Painting")은 대소문자가 안 맞아 0건이 된다. match로 찾는다.
+      const filter: unknown[] = [{ term: { is_public_domain: true } }, { exists: { field: "image_id" } }];
       if (boosted) filter.push({ term: { is_boosted: true } });
       const body = {
-        query: { bool: { filter } },
+        query: { bool: { must: [{ match: { artwork_type_title: "Painting" } }], filter } },
         fields: ["id", "title", "artist_title", "date_display", "medium_display", "image_id", "is_public_domain"],
         limit: 50,
         page,
@@ -87,6 +88,7 @@ async function* aicPaintings(): AsyncGenerator<Found> {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      if (page === 1) console.log(`시카고 검색(대표작=${boosted}): ${res.data.length}건부터 시작`);
       if (!res.data.length) break;
       for (const a of res.data) {
         if (a.is_public_domain !== true || !a.image_id) continue;
