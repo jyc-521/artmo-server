@@ -4,6 +4,7 @@
 //   npm run collect:artworks                 # 미술관별 250점, 총 500점 목표
 //   npm run collect:artworks -- --per 20     # 미술관별 20점만
 //   npm run collect:artworks -- --dry-run    # 저장하지 않고 결과만 출력
+//   npm run collect:artworks -- --museums met --per 500   # 메트로폴리탄만 500점
 //
 // 실제 Supabase·Gemini·미술관 API를 부르므로 .env가 준비된 경우에만 실행한다.
 import "dotenv/config";
@@ -13,6 +14,8 @@ import { tagArtwork, type ArtworkMeta } from "../src/services/ai.service";
 const args = process.argv.slice(2);
 const PER_MUSEUM = Number(args[args.indexOf("--per") + 1]) || 250;
 const DRY_RUN = args.includes("--dry-run");
+// 시카고 미술관 이미지 서버는 GitHub Actions 같은 데이터센터 IP를 403으로 막는다. 그런 환경에서는 --museums met로 돌린다.
+const MUSEUMS = new Set((args.includes("--museums") ? args[args.indexOf("--museums") + 1] : "met,aic").split(",").map((v) => v.trim()));
 const USER_AGENT = "ARTMO student project (Ajou University web service course)";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -216,8 +219,8 @@ async function collect(name: string, source: AsyncGenerator<Found>, existing: Se
 
 async function main() {
   const existing = DRY_RUN ? new Set<string>() : await existingKeys();
-  const met = await collect("메트로폴리탄", metPaintings(), existing);
-  const aic = await collect("시카고", aicPaintings(), existing);
+  const met = MUSEUMS.has("met") ? await collect("메트로폴리탄", metPaintings(), existing) : 0;
+  const aic = MUSEUMS.has("aic") ? await collect("시카고", aicPaintings(), existing) : 0;
   if (reasons.size) console.log("건너뛴 이유:", Object.fromEntries(reasons));
   console.log(`완료: 총 ${met + aic}점${DRY_RUN ? " (dry-run, 저장 안 함)" : ""}`);
 }
