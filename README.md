@@ -40,7 +40,7 @@ node .agents/skills/ai-boundary-check/scripts/verify-ai-boundary.mjs
 ## Render 배포
 
 - New › Web Service › 이 저장소 연결
-- Build Command `npm ci && npm run build` · Start Command `npm start`
+- Build Command `npm ci --include=dev && npm run build` (NODE_ENV=production이면 TypeScript 같은 개발용 패키지가 빠지므로 `--include=dev` 필요) · Start Command `npm start`
 - Environment에 `.env`의 값을 하나씩 입력 (`CLIENT_URL`은 Vercel 주소)
 - 배포 후 `https://<서비스>.onrender.com/health` 확인
 
