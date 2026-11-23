@@ -46,6 +46,15 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
   throw last instanceof Error ? last : new Error(String(last));
 }
 
+// Gemini 오류를 짧은 이유로 바꾼다. 상태 코드와 앞부분만 남기고 키 같은 값은 담기지 않는다.
+function geminiReason(e: unknown): string {
+  const err = e as { status?: unknown; name?: unknown; message?: unknown };
+  if (err?.name === "TimeoutError" || err?.name === "AbortError") return "시간 초과";
+  const status = typeof err?.status === "number" ? String(err.status) : "";
+  const msg = typeof err?.message === "string" ? err.message.replace(/AIza[\w-]+/g, "[key]").slice(0, 80) : String(e).slice(0, 80);
+  return status ? `${status} ${msg}` : msg;
+}
+
 // 건너뛴 이유를 세어 마지막에 보여 준다(원인 파악용).
 const reasons = new Map<string, number>();
 const skip = (why: string) => reasons.set(why, (reasons.get(why) ?? 0) + 1);
@@ -165,9 +174,16 @@ async function collect(name: string, source: AsyncGenerator<Found>, existing: Se
       if (!art.isPublicDomain) { skipped++; continue; } // 자동 검증 2: 퍼블릭 도메인
       const image = await fetchImage(art.imageUrl);
       if (!image) { skipped++; continue; }
-      const tagged = await tagArtwork(art.meta, image); // 자동 검증 3: JSON 형식·허용 태그·해설 안전성
+      // 자동 검증 3: JSON 형식·허용 태그·해설 안전성. 분당 한도(429)면 잠시 쉬고 한 번 더 시도한다.
+      let failure = "";
+      const onError = (e: unknown) => { failure = geminiReason(e); };
+      let tagged = await tagArtwork(art.meta, image, onError);
+      if (!tagged && failure.startsWith("429")) {
+        await sleep(30_000);
+        tagged = await tagArtwork(art.meta, image, onError);
+      }
       if (!tagged) {
-        skip("Gemini 태깅 실패");
+        skip(`Gemini: ${failure || "알 수 없음"}`);
         skipped++;
         // 연속 실패는 대개 Gemini 무료 등급 하루 한도 초과다. 계속 돌면 미술관 API만 낭비하므로 멈춘다. 다음 날 다시 실행하면 이어서 모은다.
         if (++tagFailStreak >= 10) { console.warn(`${name}: Gemini 태깅이 10번 연속 실패해 중단합니다(하루 한도 초과 가능). 내일 다시 실행하세요.`); break; }
@@ -188,7 +204,7 @@ async function collect(name: string, source: AsyncGenerator<Found>, existing: Se
       existing.add(key);
       saved++;
       if (saved % 25 === 0) console.log(`${name}: ${saved}/${PER_MUSEUM}`);
-      await sleep(1500); // Gemini 무료 등급 분당 요청 수를 넘지 않게
+      await sleep(4000); // Gemini 무료 등급 분당 요청 수(약 15회)를 넘지 않게
     }
   } catch (e) {
     // 한 미술관 API가 막혀도 다른 미술관 수집은 계속한다.

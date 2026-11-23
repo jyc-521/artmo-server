@@ -81,7 +81,7 @@ const tagSchema: Schema = {
   required: ["emotionTags", "description"],
 };
 
-async function generateJson(model: string, systemInstruction: string, responseSchema: Schema, parts: unknown[]): Promise<unknown> {
+async function generateJson(model: string, systemInstruction: string, responseSchema: Schema, parts: unknown[], timeoutMs = GEMINI_TIMEOUT_MS): Promise<unknown> {
   const response = await getGemini().models.generateContent({
     model,
     contents: [{ role: "user", parts: parts as never }],
@@ -90,7 +90,7 @@ async function generateJson(model: string, systemInstruction: string, responseSc
       responseMimeType: "application/json",
       responseSchema,
       temperature: 0.4,
-      abortSignal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
+      abortSignal: AbortSignal.timeout(timeoutMs),
     },
   });
   const text = response.text;
@@ -161,16 +161,27 @@ export interface ArtworkMeta {
 }
 
 // 수집 스크립트용: 작품 정보와 이미지로 감정 태그·해설을 만든다. 형식이 맞지 않으면 null.
-export async function tagArtwork(meta: ArtworkMeta, image?: { mimeType: string; data: string }): Promise<{ emotionTags: string[]; description: string } | null> {
+// 작품 태깅은 수집 스크립트에서만 쓰고 이미지까지 보내므로 사용자 요청(10초)보다 넉넉히 기다린다.
+const TAGGING_TIMEOUT_MS = 45_000;
+
+export async function tagArtwork(
+  meta: ArtworkMeta,
+  image?: { mimeType: string; data: string },
+  onError?: (error: unknown) => void,
+): Promise<{ emotionTags: string[]; description: string } | null> {
   try {
     const parts: unknown[] = [{ text: JSON.stringify(meta) }];
     if (image) parts.push({ inlineData: image });
-    const raw = (await generateJson(taggingModel(), TAG_INSTRUCTION, tagSchema, parts)) as Record<string, unknown>;
+    const raw = (await generateJson(taggingModel(), TAG_INSTRUCTION, tagSchema, parts, TAGGING_TIMEOUT_MS)) as Record<string, unknown>;
     const emotionTags = cleanTags(raw.emotionTags);
     const description = safeText(raw.description, 400);
-    if (emotionTags.length < 3 || !description) return null;
+    if (emotionTags.length < 3 || !description) {
+      onError?.(new Error("형식 검증 실패"));
+      return null;
+    }
     return { emotionTags, description };
-  } catch {
+  } catch (error) {
+    onError?.(error);
     return null;
   }
 }

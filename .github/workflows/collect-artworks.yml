@@ -13,6 +13,10 @@ on:
         description: "true면 저장하지 않고 결과만 출력"
         type: boolean
         default: true
+      model:
+        description: "태깅 모델 (비우면 기본값 gemini-3.5-flash)"
+        default: ""
+        required: false
 
 permissions:
   contents: read
@@ -39,9 +43,11 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL_TAGGING: ${{ inputs.model }}
           PER: ${{ inputs.per }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
+          case "$GEMINI_MODEL_TAGGING" in ''|gemini-[a-z0-9.-]*) ;; *) echo "모델 이름 형식이 아닙니다"; exit 1;; esac
           case "$PER" in ''|*[!0-9]*) echo "per는 숫자만 넣으세요"; exit 1;; esac
           if [ "$DRY_RUN" = "true" ]; then
             npm run collect:artworks -- --per "$PER" --dry-run
