@@ -24,13 +24,26 @@ export function isProxyableImage(raw: string): boolean {
 
 export async function fetchArtworkImage(raw: string): Promise<{ contentType: string; body: Buffer }> {
   if (!isProxyableImage(raw)) throw new HttpError(404, "이 작품 이미지는 전달할 수 없습니다.");
-  let res: Response;
-  try {
-    // 리다이렉트를 따라가면 허용 목록 밖으로 나갈 수 있으므로 막는다.
-    res = await fetch(raw, { redirect: "error", signal: AbortSignal.timeout(TIMEOUT_MS) });
-  } catch {
-    throw new HttpError(502, "작품 이미지를 불러오지 못했습니다.");
+  // 리다이렉트는 최대 3번, 매번 허용 목록을 다시 확인하며 직접 따라간다(목록 밖으로 나가는 것 방지).
+  let url = raw;
+  let res: Response | undefined;
+  for (let hop = 0; hop <= 3; hop++) {
+    try {
+      res = await fetch(url, {
+        redirect: "manual",
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+        headers: { "User-Agent": "ARTMO/1.0 (+https://artmo-client.vercel.app)", Accept: "image/*" },
+      });
+    } catch {
+      throw new HttpError(502, "작품 이미지를 불러오지 못했습니다.");
+    }
+    if (res.status < 300 || res.status >= 400) break;
+    const next = res.headers.get("location");
+    const nextUrl = next ? new URL(next, url).toString() : "";
+    if (!nextUrl || !isProxyableImage(nextUrl) || hop === 3) throw new HttpError(502, "작품 이미지를 불러오지 못했습니다.");
+    url = nextUrl;
   }
+  if (!res) throw new HttpError(502, "작품 이미지를 불러오지 못했습니다.");
   const contentType = res.headers.get("content-type") ?? "";
   const declared = Number(res.headers.get("content-length") ?? 0);
   if (!res.ok || !/^image\/(jpeg|png|webp|gif)\b/.test(contentType) || declared > MAX_BYTES) {

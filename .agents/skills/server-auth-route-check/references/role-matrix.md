@@ -17,7 +17,7 @@ Source of truth: `docs/PRD.md` section 5-3. Update both together.
 | `GET /api/recommendations/me` | isAuthenticated | `401` | `200` own | `200` own | |
 | `POST /api/recommendations/:id/share` | none | `204` | `204` | `204` | increments `shared_count` |
 | `GET /api/artworks` · `/popular` · `/tags` · `/:id` | none | `200` | `200` | `200` | visible artworks only; `/tags` = allowed emotion tags |
-| `GET /api/artworks/:id/image` | none | `200` | `200` | `200` | share-card image proxy; host allowlist (Met, AIC, Supabase), no redirects, image/* ≤8MB; `404` outside allowlist, `502` upstream failure |
+| `GET /api/artworks/:id/image` | none | `200` | `200` | `200` | share-card image proxy; host allowlist (Met, AIC, Supabase), redirects (≤3) only within allowlist, image/* ≤8MB; `404` outside allowlist, `502` upstream failure |
 | `GET /api/artworks/saved` | isAuthenticated | `401` | `200` own | `200` own | saved artworks of `req.auth` |
 | `POST /api/artworks` | isAuthenticated → requireAdmin | `401` | `403` | `201` | |
 | `PUT /api/artworks/:id` | isAuthenticated → requireAdmin | `401` | `403` | `200` | |

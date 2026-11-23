@@ -254,7 +254,7 @@ describe("작품 이미지 전달 (공유 카드용)", () => {
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toBe("image/jpeg");
     expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
-    expect(fetchMock).toHaveBeenCalledWith(MET, expect.objectContaining({ redirect: "error" }));
+    expect(fetchMock).toHaveBeenCalledWith(MET, expect.objectContaining({ redirect: "manual" }));
   });
   test.each([
     "https://evil.example/a.jpg",
@@ -274,6 +274,15 @@ describe("작품 이미지 전달 (공유 카드용)", () => {
   test("리다이렉트·네트워크 실패 → 502", async () => {
     fetchMock.mockRejectedValue(new TypeError("redirect"));
     expect((await request(app).get("/api/artworks/1/image")).status).toBe(502);
+  });
+  test("허용 목록 안 리다이렉트는 따라가고, 밖이면 502", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: "/b.jpg" } }));
+    expect((await request(app).get("/api/artworks/1/image")).status).toBe(200);
+    expect(fetchMock).toHaveBeenLastCalledWith("https://images.metmuseum.org/b.jpg", expect.anything());
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: "https://evil.example/x.jpg" } }));
+    expect((await request(app).get("/api/artworks/1/image")).status).toBe(502);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   test("잘못된 id → 400", async () => {
     expect((await request(app).get("/api/artworks/abc/image")).status).toBe(400);
