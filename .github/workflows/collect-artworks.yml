@@ -1,0 +1,50 @@
+# 작품 수집을 GitHub Actions에서 실행한다. 키는 저장소 Secrets에만 두고, 코드·로그·채팅에는 남기지 않는다.
+# 실행: GitHub > Actions > "Collect artworks" > Run workflow (처음엔 dry_run=true로 확인)
+name: Collect artworks
+
+on:
+  workflow_dispatch:
+    inputs:
+      per:
+        description: "미술관별 목표 작품 수 (Met·AIC 각각)"
+        default: "250"
+        required: true
+      dry_run:
+        description: "true면 저장하지 않고 결과만 출력"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: collect-artworks
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Collect
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PER: ${{ inputs.per }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          case "$PER" in ''|*[!0-9]*) echo "per는 숫자만 넣으세요"; exit 1;; esac
+          if [ "$DRY_RUN" = "true" ]; then
+            npm run collect:artworks -- --per "$PER" --dry-run
+          else
+            npm run collect:artworks -- --per "$PER"
+          fi

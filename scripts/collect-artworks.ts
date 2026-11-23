@@ -130,6 +130,7 @@ async function existingKeys(): Promise<Set<string>> {
 async function collect(name: string, source: AsyncGenerator<Found>, existing: Set<string>) {
   let saved = 0;
   let skipped = 0;
+  let tagFailStreak = 0;
   for await (const art of source) {
     if (saved >= PER_MUSEUM) break;
     const key = `${art.source}:${art.sourceId}`;
@@ -138,7 +139,13 @@ async function collect(name: string, source: AsyncGenerator<Found>, existing: Se
     const image = await fetchImage(art.imageUrl);
     if (!image) { skipped++; continue; }
     const tagged = await tagArtwork(art.meta, image); // 자동 검증 3: JSON 형식·허용 태그·해설 안전성
-    if (!tagged) { skipped++; continue; }
+    if (!tagged) {
+      skipped++;
+      // 연속 실패는 대개 Gemini 무료 등급 하루 한도 초과다. 계속 돌면 미술관 API만 낭비하므로 멈춘다. 다음 날 다시 실행하면 이어서 모은다.
+      if (++tagFailStreak >= 10) { console.warn(`${name}: Gemini 태깅이 10번 연속 실패해 중단합니다(하루 한도 초과 가능). 내일 다시 실행하세요.`); break; }
+      continue;
+    }
+    tagFailStreak = 0;
     const row = {
       source: art.source, source_id: art.sourceId, title: art.meta.title.slice(0, 300), artist: art.meta.artist.slice(0, 200),
       year: art.meta.year.slice(0, 50), medium: art.meta.medium.slice(0, 200), image_url: art.imageUrl, source_url: art.sourceUrl,
