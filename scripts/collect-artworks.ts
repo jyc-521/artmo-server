@@ -25,11 +25,30 @@ interface Found {
   isPublicDomain: boolean;
 }
 
+// 네트워크가 잠깐 끊기거나 429·5xx가 오면 잠시 쉬었다가 최대 3번 다시 시도한다.
 async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, { ...init, headers: { "User-Agent": USER_AGENT, "AIC-User-Agent": USER_AGENT, ...(init?.headers ?? {}) } });
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
-  return (await res.json()) as T;
+  let last: unknown;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(20_000),
+        headers: { "User-Agent": USER_AGENT, "AIC-User-Agent": USER_AGENT, ...(init?.headers ?? {}) },
+      });
+      if (res.ok) return (await res.json()) as T;
+      last = new Error(`HTTP ${res.status} ${new URL(url).hostname}`);
+      if (res.status !== 429 && res.status < 500) break;
+    } catch (e) {
+      last = e;
+    }
+    await sleep(2000 * attempt);
+  }
+  throw last instanceof Error ? last : new Error(String(last));
 }
+
+// 건너뛴 이유를 세어 마지막에 보여 준다(원인 파악용).
+const reasons = new Map<string, number>();
+const skip = (why: string) => reasons.set(why, (reasons.get(why) ?? 0) + 1);
 
 const MET = "https://collectionapi.metmuseum.org/public/collection";
 
@@ -108,14 +127,19 @@ async function* aicPaintings(): AsyncGenerator<Found> {
 
 // 자동 검증 1: 이미지 주소가 실제로 열리는 https 이미지인지
 async function fetchImage(url: string): Promise<{ mimeType: string; data: string } | null> {
-  if (!url.startsWith("https://")) return null;
-  const res = await fetch(url, { headers: { "User-Agent": USER_AGENT } }).catch(() => null);
-  if (!res || res.status !== 200) return null;
-  const mimeType = res.headers.get("content-type")?.split(";")[0] ?? "";
-  if (!mimeType.startsWith("image/")) return null;
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.length < 1000 || buf.length > 8_000_000) return null;
-  return { mimeType, data: buf.toString("base64") };
+  if (!url.startsWith("https://")) { skip("이미지: https 아님"); return null; }
+  try {
+    const res = await fetch(url, { headers: { "User-Agent": USER_AGENT }, signal: AbortSignal.timeout(20_000) });
+    if (res.status !== 200) { skip(`이미지: HTTP ${res.status} ${new URL(url).hostname}`); return null; }
+    const mimeType = res.headers.get("content-type")?.split(";")[0] ?? "";
+    if (!mimeType.startsWith("image/")) { skip(`이미지: 형식 ${mimeType || "없음"}`); return null; }
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length < 1000 || buf.length > 8_000_000) { skip("이미지: 크기 범위 밖"); return null; }
+    return { mimeType, data: buf.toString("base64") };
+  } catch {
+    skip(`이미지: 네트워크 실패 ${new URL(url).hostname}`);
+    return null;
+  }
 }
 
 async function existingKeys(): Promise<Set<string>> {
@@ -133,36 +157,42 @@ async function collect(name: string, source: AsyncGenerator<Found>, existing: Se
   let saved = 0;
   let skipped = 0;
   let tagFailStreak = 0;
-  for await (const art of source) {
-    if (saved >= PER_MUSEUM) break;
-    const key = `${art.source}:${art.sourceId}`;
-    if (existing.has(key)) { skipped++; continue; } // 이미 저장된 작품은 건너뛴다
-    if (!art.isPublicDomain) { skipped++; continue; } // 자동 검증 2: 퍼블릭 도메인
-    const image = await fetchImage(art.imageUrl);
-    if (!image) { skipped++; continue; }
-    const tagged = await tagArtwork(art.meta, image); // 자동 검증 3: JSON 형식·허용 태그·해설 안전성
-    if (!tagged) {
-      skipped++;
-      // 연속 실패는 대개 Gemini 무료 등급 하루 한도 초과다. 계속 돌면 미술관 API만 낭비하므로 멈춘다. 다음 날 다시 실행하면 이어서 모은다.
-      if (++tagFailStreak >= 10) { console.warn(`${name}: Gemini 태깅이 10번 연속 실패해 중단합니다(하루 한도 초과 가능). 내일 다시 실행하세요.`); break; }
-      continue;
+  try {
+    for await (const art of source) {
+      if (saved >= PER_MUSEUM) break;
+      const key = `${art.source}:${art.sourceId}`;
+      if (existing.has(key)) { skipped++; continue; } // 이미 저장된 작품은 건너뛴다
+      if (!art.isPublicDomain) { skipped++; continue; } // 자동 검증 2: 퍼블릭 도메인
+      const image = await fetchImage(art.imageUrl);
+      if (!image) { skipped++; continue; }
+      const tagged = await tagArtwork(art.meta, image); // 자동 검증 3: JSON 형식·허용 태그·해설 안전성
+      if (!tagged) {
+        skip("Gemini 태깅 실패");
+        skipped++;
+        // 연속 실패는 대개 Gemini 무료 등급 하루 한도 초과다. 계속 돌면 미술관 API만 낭비하므로 멈춘다. 다음 날 다시 실행하면 이어서 모은다.
+        if (++tagFailStreak >= 10) { console.warn(`${name}: Gemini 태깅이 10번 연속 실패해 중단합니다(하루 한도 초과 가능). 내일 다시 실행하세요.`); break; }
+        continue;
+      }
+      tagFailStreak = 0;
+      const row = {
+        source: art.source, source_id: art.sourceId, title: art.meta.title.slice(0, 300), artist: art.meta.artist.slice(0, 200),
+        year: art.meta.year.slice(0, 50), medium: art.meta.medium.slice(0, 200), image_url: art.imageUrl, source_url: art.sourceUrl,
+        emotion_tags: tagged.emotionTags, description: tagged.description, is_public_domain: true,
+      };
+      if (DRY_RUN) {
+        console.log(`[dry-run] ${name} ${art.sourceId} ${row.title} → ${row.emotion_tags.join(", ")}`);
+      } else {
+        const { error } = await getSupabase().from("artworks").insert(row);
+        if (error) { skipped++; console.warn(`저장 실패 ${key}: ${error.code ?? ""}`); continue; }
+      }
+      existing.add(key);
+      saved++;
+      if (saved % 25 === 0) console.log(`${name}: ${saved}/${PER_MUSEUM}`);
+      await sleep(1500); // Gemini 무료 등급 분당 요청 수를 넘지 않게
     }
-    tagFailStreak = 0;
-    const row = {
-      source: art.source, source_id: art.sourceId, title: art.meta.title.slice(0, 300), artist: art.meta.artist.slice(0, 200),
-      year: art.meta.year.slice(0, 50), medium: art.meta.medium.slice(0, 200), image_url: art.imageUrl, source_url: art.sourceUrl,
-      emotion_tags: tagged.emotionTags, description: tagged.description, is_public_domain: true,
-    };
-    if (DRY_RUN) {
-      console.log(`[dry-run] ${name} ${art.sourceId} ${row.title} → ${row.emotion_tags.join(", ")}`);
-    } else {
-      const { error } = await getSupabase().from("artworks").insert(row);
-      if (error) { skipped++; console.warn(`저장 실패 ${key}: ${error.code ?? ""}`); continue; }
-    }
-    existing.add(key);
-    saved++;
-    if (saved % 25 === 0) console.log(`${name}: ${saved}/${PER_MUSEUM}`);
-    await sleep(1500); // Gemini 무료 등급 분당 요청 수를 넘지 않게
+  } catch (e) {
+    // 한 미술관 API가 막혀도 다른 미술관 수집은 계속한다.
+    console.warn(`${name}: 목록 조회 중단 (${e instanceof Error ? e.message : e})`);
   }
   console.log(`${name}: 저장 ${saved}점, 건너뜀 ${skipped}점`);
   return saved;
@@ -172,6 +202,7 @@ async function main() {
   const existing = DRY_RUN ? new Set<string>() : await existingKeys();
   const met = await collect("메트로폴리탄", metPaintings(), existing);
   const aic = await collect("시카고", aicPaintings(), existing);
+  if (reasons.size) console.log("건너뛴 이유:", Object.fromEntries(reasons));
   console.log(`완료: 총 ${met + aic}점${DRY_RUN ? " (dry-run, 저장 안 함)" : ""}`);
 }
 
