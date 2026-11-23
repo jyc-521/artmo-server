@@ -86,6 +86,7 @@ const publicRoutes: [Method, string][] = [
   ["get", "/api/artworks/popular"],
   ["get", "/api/artworks/tags"],
   ["get", "/api/artworks/1"],
+  ["get", "/api/artworks/1/image"],
   ["get", `/api/recommendations/${REC_ID}`],
   ["post", `/api/recommendations/${REC_ID}/share`],
 ];
@@ -234,5 +235,47 @@ describe("응답 형식과 앱 설정", () => {
     const res = await request(app).get("/api/auth/providers");
     expect(res.body).toEqual({ data: { email: true, google: true, naver: false } });
     expect(res.headers["cache-control"]).toBe("no-store");
+  });
+});
+
+describe("작품 이미지 전달 (공유 카드용)", () => {
+  const MET = "https://images.metmuseum.org/CRDImages/ep/web-large/a.jpg";
+  const fetchMock = jest.fn();
+  beforeEach(() => {
+    global.fetch = fetchMock as unknown as typeof fetch;
+    fetchMock.mockResolvedValue(new Response(Buffer.from("img"), { headers: { "content-type": "image/jpeg" } }));
+    jest.mocked(artworks.getArtwork).mockResolvedValue({ imageUrl: MET } as never);
+  });
+  test.each([["비로그인", undefined], ["일반 사용자", "user-token"], ["관리자", "admin-token"]])("%s → 200 이미지", async (_who, token) => {
+    if (token === "admin-token") asRole("admin");
+    const req = request(app).get("/api/artworks/1/image").set("Origin", "http://localhost:5173");
+    if (token) req.set("Authorization", `Bearer ${token}`);
+    const res = await req;
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toBe("image/jpeg");
+    expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+    expect(fetchMock).toHaveBeenCalledWith(MET, expect.objectContaining({ redirect: "error" }));
+  });
+  test.each([
+    "https://evil.example/a.jpg",
+    "http://images.metmuseum.org/a.jpg",
+    "https://images.metmuseum.org:8443/a.jpg",
+    "https://user:pw@images.metmuseum.org/a.jpg",
+    "https://169.254.169.254/latest",
+  ])("허용 목록 밖 주소 %s → 404, 외부 요청 없음", async (url) => {
+    jest.mocked(artworks.getArtwork).mockResolvedValue({ imageUrl: url } as never);
+    expect((await request(app).get("/api/artworks/1/image")).status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  test("이미지가 아닌 응답 → 502", async () => {
+    fetchMock.mockResolvedValue(new Response("<html>", { headers: { "content-type": "text/html" } }));
+    expect((await request(app).get("/api/artworks/1/image")).status).toBe(502);
+  });
+  test("리다이렉트·네트워크 실패 → 502", async () => {
+    fetchMock.mockRejectedValue(new TypeError("redirect"));
+    expect((await request(app).get("/api/artworks/1/image")).status).toBe(502);
+  });
+  test("잘못된 id → 400", async () => {
+    expect((await request(app).get("/api/artworks/abc/image")).status).toBe(400);
   });
 });

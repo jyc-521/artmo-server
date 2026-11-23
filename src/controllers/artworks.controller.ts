@@ -4,6 +4,7 @@ import HttpError from "../utils/httpError";
 import { booleanField, httpsUrlField, numericId, objectBody, textField } from "../utils/input";
 import { ALLOWED_TAGS, cleanTags } from "../services/ai.service";
 import * as artworks from "../services/artworks.service";
+import { fetchArtworkImage } from "../services/image.service";
 
 const TAGS = new Set<string>(ALLOWED_TAGS);
 
@@ -30,6 +31,19 @@ export const popular = asyncHandler(async (req, res) => {
 
 export const get = asyncHandler(async (req, res) => {
   res.json({ data: await artworks.getArtwork(numericId(String(req.params.id))) });
+});
+
+// 공유 카드용 이미지 전달. 숨김 작품은 getArtwork에서 404.
+export const image = asyncHandler(async (req, res) => {
+  const art = await artworks.getArtwork(numericId(String(req.params.id)));
+  const { contentType, body } = await fetchArtworkImage(art.imageUrl);
+  res.set({
+    "Content-Type": contentType,
+    "Cache-Control": "public, max-age=86400",
+    "Cross-Origin-Resource-Policy": "cross-origin",
+    "X-Content-Type-Options": "nosniff",
+  });
+  res.send(body);
 });
 
 export const tags: RequestHandler = (_req, res) => {

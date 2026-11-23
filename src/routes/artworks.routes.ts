@@ -8,6 +8,7 @@ router.get("/popular", controller.popular);
 router.get("/tags", controller.tags);
 router.get("/saved", isAuthenticated, controller.saved);
 router.get("/:id", controller.get);
+router.get("/:id/image", controller.image);
 router.post("/", isAuthenticated, requireAdmin, controller.create);
 router.put("/:id", isAuthenticated, requireAdmin, controller.update);
 router.delete("/:id", isAuthenticated, requireAdmin, controller.remove);
