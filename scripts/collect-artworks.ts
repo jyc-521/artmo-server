@@ -40,7 +40,9 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
       });
       if (res.ok) return (await res.json()) as T;
       last = new Error(`HTTP ${res.status} ${new URL(url).hostname}`);
-      if (res.status !== 429 && res.status < 500) break;
+      // 403·429는 요청이 많다고 잠시 막은 경우가 많아 길게 쉬고, 그 밖의 4xx는 바로 포기한다.
+      if (res.status === 403 || res.status === 429) { await sleep(30_000 * attempt); continue; }
+      if (res.status < 500) break;
     } catch (e) {
       last = e;
     }
@@ -82,12 +84,13 @@ async function* metIds(): AsyncGenerator<number> {
   }
 }
 
-async function* metPaintings(): AsyncGenerator<Found> {
+async function* metPaintings(existing: Set<string>): AsyncGenerator<Found> {
   const seen = new Set<number>();
   for await (const id of metIds()) {
     if (seen.has(id)) continue;
     seen.add(id);
-    await sleep(100); // 공식 권장 초당 80회보다 훨씬 느리게
+    if (existing.has(`met:${id}`)) continue; // 이미 저장한 작품은 상세 조회도 하지 않는다(다시 실행할 때 요청 수 절약)
+    await sleep(300); // 공식 권장 초당 80회보다 훨씬 느리게
     const o = await getJson<Record<string, string | boolean>>(`${MET}/v1/objects/${id}`).catch(() => null);
     if (!o || o.isPublicDomain !== true || o.classification !== "Paintings" || !o.primaryImageSmall) continue;
     yield {
@@ -222,7 +225,7 @@ async function collect(name: string, source: AsyncGenerator<Found>, existing: Se
 
 async function main() {
   const existing = DRY_RUN ? new Set<string>() : await existingKeys();
-  const met = MUSEUMS.has("met") ? await collect("메트로폴리탄", metPaintings(), existing) : 0;
+  const met = MUSEUMS.has("met") ? await collect("메트로폴리탄", metPaintings(existing), existing) : 0;
   const aic = MUSEUMS.has("aic") ? await collect("시카고", aicPaintings(), existing) : 0;
   if (reasons.size) console.log("건너뛴 이유:", Object.fromEntries(reasons));
   console.log(`완료: 총 ${met + aic}점${DRY_RUN ? " (dry-run, 저장 안 함)" : ""}`);
