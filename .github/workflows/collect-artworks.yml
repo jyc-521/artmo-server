@@ -7,7 +7,7 @@ on:
     inputs:
       per:
         description: "미술관별 목표 작품 수"
-        default: "500"
+        default: "150"
         required: true
       dry_run:
         description: "true면 저장하지 않고 결과만 출력"
@@ -17,10 +17,11 @@ on:
         description: "met, aic 또는 met,aic (시카고 이미지는 GitHub에서 403으로 막힘)"
         default: "met"
         required: true
-      rare_emotions:
-        description: "적게 모인 감정(분노·초조·자유·기쁨·희망) 작품만 보충 (per는 60 정도로)"
-        type: boolean
-        default: false
+      focus:
+        description: "balance=감정 골고루(권장), rare=분노·초조·자유·기쁨·희망만, none=제한 없음"
+        type: choice
+        options: [balance, rare, none]
+        default: balance
       model:
         description: "태깅 모델 (비우면 gemini-3.5-flash)"
         default: "gemini-3.1-flash-lite"
@@ -55,13 +56,13 @@ jobs:
           PER: ${{ inputs.per }}
           DRY_RUN: ${{ inputs.dry_run }}
           MUSEUMS: ${{ inputs.museums }}
-          RARE: ${{ inputs.rare_emotions }}
+          FOCUS: ${{ inputs.focus }}
         run: |
           case "$GEMINI_MODEL_TAGGING" in ''|gemini-[a-z0-9.-]*) ;; *) echo "모델 이름 형식이 아닙니다"; exit 1;; esac
           case "$MUSEUMS" in met|aic|met,aic|aic,met) ;; *) echo "museums는 met, aic, met,aic 중 하나"; exit 1;; esac
           case "$PER" in ''|*[!0-9]*) echo "per는 숫자만 넣으세요"; exit 1;; esac
           EXTRA=""
-          if [ "$RARE" = "true" ]; then EXTRA="--focus rare"; fi
+          case "$FOCUS" in balance|rare) EXTRA="--focus $FOCUS";; none|'') ;; *) echo "focus 값 오류"; exit 1;; esac
           if [ "$DRY_RUN" = "true" ]; then
             npm run collect:artworks -- --per "$PER" --museums "$MUSEUMS" $EXTRA --dry-run
           else

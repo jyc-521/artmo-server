@@ -15,15 +15,50 @@ const args = process.argv.slice(2);
 const PER_MUSEUM = Number(args[args.indexOf("--per") + 1]) || 250;
 const DRY_RUN = args.includes("--dry-run");
 // 시카고 미술관 이미지 서버는 GitHub Actions 같은 데이터센터 IP를 403으로 막는다. 그런 환경에서는 --museums met로 돌린다.
-// --focus rare: 수집된 작품이 고요·평온 쪽으로 쏠려서, 적게 나온 감정이 나올 만한 주제어로 찾고
-// 그 감정 태그가 붙은 작품만 저장한다(나머지는 태깅만 하고 버림).
-const FOCUS_RARE = args.includes("--focus") && args[args.indexOf("--focus") + 1] === "rare";
-const RARE_TERMS = [
-  "battle", "storm", "shipwreck", "fire", "fury", "revenge", "fight", "temptation", // 분노·초조
-  "dance", "festival", "celebration", "wedding", "feast", "carnival", "children playing", "picnic", // 기쁨
-  "sunrise", "spring", "sailing", "harbor", "horse race", "flight", "rainbow", "dawn", // 자유·희망
-];
-const WANT_TAGS = new Set(FOCUS_RARE ? ["분노", "초조", "자유", "기쁨", "희망"] : []);
+// 감정 편향을 막는 수집 모드.
+//   --focus balance : (기본 권장) DB의 감정별 작품 수를 보고, 적은 감정의 주제어부터 찾고,
+//                     지금 평균보다 적은 감정이 하나라도 붙은 작품만 저장한다. 저장할 때마다 다시 계산한다.
+//   --focus rare    : 분노·초조·자유·기쁨·희망만 보충(2026-11-24 1차 보충용)
+const FOCUS = args.includes("--focus") ? args[args.indexOf("--focus") + 1] : "";
+const FOCUS_RARE = FOCUS === "rare";
+const FOCUS_BALANCE = FOCUS === "balance";
+const TERMS_BY_TAG: Record<string, string[]> = {
+  고독: ["solitary figure", "hermit", "lonely"], 쓸쓸함: ["autumn", "ruins", "winter evening"],
+  그리움: ["letter", "farewell", "waiting"], 슬픔: ["mourning", "lamentation", "grief"],
+  불안: ["storm at sea", "night", "eruption"], 초조: ["fire", "escape", "card players"],
+  혼란: ["battle", "crowd", "chaos"], 분노: ["fight", "revenge", "fury", "wrath"],
+  지침: ["laborers", "harvest", "rest"], 나른함: ["siesta", "sleeping", "afternoon"],
+  평온: ["pastoral", "landscape", "river"], 고요: ["still life", "interior", "moonlight"],
+  따뜻함: ["family", "mother and child", "hearth"], 기쁨: ["dance", "festival", "celebration", "feast"],
+  설렘: ["courtship", "garden party", "young woman"], 사랑: ["lovers", "kiss", "venus"],
+  희망: ["sunrise", "rainbow", "spring", "dawn"], 벅참: ["triumph", "mountains", "waterfall"],
+  자유: ["sailing", "horse race", "birds", "open sea"], 경이: ["sublime", "glacier", "angels"],
+  광활함: ["plains", "panorama", "desert"], 향수: ["village", "childhood", "homestead"],
+  차가움: ["winter", "snow", "ice"], 몽환: ["dream", "mythology", "nymphs"],
+};
+const RARE_TAGS = ["분노", "초조", "자유", "기쁨", "희망"];
+const tagCounts = new Map<string, number>(Object.keys(TERMS_BY_TAG).map((t) => [t, 0]));
+// 저장할 가치가 있는 감정: rare는 고정, balance는 지금 평균보다 적은 감정
+function wantedTags(): Set<string> {
+  if (FOCUS_RARE) return new Set(RARE_TAGS);
+  if (!FOCUS_BALANCE) return new Set();
+  const counts = [...tagCounts.values()];
+  const avg = counts.reduce((x, y) => x + y, 0) / counts.length;
+  return new Set([...tagCounts].filter(([, n]) => n < avg).map(([t]) => t));
+}
+// 주제어 순서: 지금 가장 적은 감정의 주제어부터
+function searchTerms(): string[] {
+  const tags = FOCUS_RARE ? RARE_TAGS : [...tagCounts].sort((x, y) => x[1] - y[1]).map(([t]) => t);
+  return [...new Set(tags.flatMap((t) => TERMS_BY_TAG[t] ?? []))];
+}
+async function loadTagCounts(): Promise<void> {
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await getSupabase().from("artworks").select("emotion_tags").range(from, from + 999);
+    if (error) throw new Error(`감정 분포 조회 실패: ${error.code ?? ""}`);
+    for (const r of data as { emotion_tags: string[] }[]) for (const t of r.emotion_tags ?? []) tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
+    if (data.length < 1000) break;
+  }
+}
 const MUSEUMS = new Set((args.includes("--museums") ? args[args.indexOf("--museums") + 1] : "met,aic").split(",").map((v) => v.trim()));
 const USER_AGENT = "ARTMO student project (Ajou University web service course)";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -78,8 +113,8 @@ const MET = "https://collectionapi.metmuseum.org/public/collection";
 // 메트로폴리탄 작품 ID 순서: 유럽 회화(11)·미국관(1)·근현대(21)의 대표작 먼저, 그다음 부서 전체 목록.
 // v1/search는 2026-10-01에 종료되어 v1.1/search(offset·limit 페이지)와 v1/objects를 쓴다.
 async function* metIds(): AsyncGenerator<number> {
-  if (FOCUS_RARE) {
-    for (const term of RARE_TERMS) {
+  if (FOCUS_RARE || FOCUS_BALANCE) {
+    for (const term of searchTerms()) {
       for (const dept of [11, 1, 21]) {
         for (let offset = 0; offset < 300; offset += 100) {
           const { objectIDs } = await getJson<{ objectIDs: number[] | null }>(
@@ -222,7 +257,8 @@ async function collect(name: string, source: AsyncGenerator<Found>, existing: Se
         continue;
       }
       tagFailStreak = 0;
-      if (WANT_TAGS.size && !tagged.emotionTags.some((t) => WANT_TAGS.has(t))) { skip("원하는 감정 아님"); skipped++; continue; }
+      const want = wantedTags();
+      if (want.size && !tagged.emotionTags.some((t) => want.has(t))) { skip("이미 많은 감정만 나옴"); skipped++; continue; }
       const row = {
         source: art.source, source_id: art.sourceId, title: art.meta.title.slice(0, 300), artist: art.meta.artist.slice(0, 200),
         year: art.meta.year.slice(0, 50), medium: art.meta.medium.slice(0, 200), image_url: art.imageUrl, source_url: art.sourceUrl,
@@ -235,6 +271,7 @@ async function collect(name: string, source: AsyncGenerator<Found>, existing: Se
         if (error) { skipped++; console.warn(`저장 실패 ${key}: ${error.code ?? ""}`); continue; }
       }
       existing.add(key);
+      for (const t of row.emotion_tags) tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
       saved++;
       if (saved % 25 === 0) console.log(`${name}: ${saved}/${PER_MUSEUM}`);
       await sleep(4000); // Gemini 무료 등급 분당 요청 수(약 15회)를 넘지 않게
@@ -249,9 +286,11 @@ async function collect(name: string, source: AsyncGenerator<Found>, existing: Se
 
 async function main() {
   const existing = DRY_RUN ? new Set<string>() : await existingKeys();
+  if (!DRY_RUN && (FOCUS_BALANCE || FOCUS_RARE)) await loadTagCounts();
   const met = MUSEUMS.has("met") ? await collect("메트로폴리탄", metPaintings(existing), existing) : 0;
   const aic = MUSEUMS.has("aic") ? await collect("시카고", aicPaintings(), existing) : 0;
   if (reasons.size) console.log("건너뛴 이유:", Object.fromEntries(reasons));
+  if (FOCUS_BALANCE || FOCUS_RARE) console.log("감정별 작품 수(이번 실행 반영):", Object.fromEntries([...tagCounts].sort((x, y) => x[1] - y[1])));
   console.log(`완료: 총 ${met + aic}점${DRY_RUN ? " (dry-run, 저장 안 함)" : ""}`);
 }
 
