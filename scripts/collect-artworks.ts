@@ -181,15 +181,18 @@ async function collect(name: string, source: AsyncGenerator<Found>, existing: Se
       let failure = "";
       const onError = (e: unknown) => { failure = geminiReason(e); };
       let tagged = await tagArtwork(art.meta, image, onError);
-      if (!tagged && failure.startsWith("429")) {
-        await sleep(30_000);
+      // 429(한도)·500·503(Gemini 쪽 혼잡)은 잠시 뒤 풀리는 경우가 많아 20초·40초·60초 쉬며 최대 3번 다시 시도한다.
+      for (let retry = 1; !tagged && retry <= 3 && /^(429|500|503)\b/.test(failure); retry++) {
+        console.warn(`${name}: Gemini ${failure.slice(0, 3)} → ${20 * retry}초 뒤 다시 시도`);
+        await sleep(20_000 * retry);
+        failure = "";
         tagged = await tagArtwork(art.meta, image, onError);
       }
       if (!tagged) {
         skip(`Gemini: ${failure || "알 수 없음"}`);
         skipped++;
         // 연속 실패는 대개 Gemini 무료 등급 하루 한도 초과다. 계속 돌면 미술관 API만 낭비하므로 멈춘다. 다음 날 다시 실행하면 이어서 모은다.
-        if (++tagFailStreak >= 10) { console.warn(`${name}: Gemini 태깅이 10번 연속 실패해 중단합니다(하루 한도 초과 가능). 내일 다시 실행하세요.`); break; }
+        if (++tagFailStreak >= 10) { console.warn(`${name}: Gemini 태깅이 10번 연속 실패해 중단합니다. 마지막 이유: ${failure || "알 수 없음"}. 429면 하루 한도라 내일, 503이면 Gemini 혼잡이라 잠시 뒤 다시 실행하세요.`); break; }
         continue;
       }
       tagFailStreak = 0;
