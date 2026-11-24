@@ -15,6 +15,15 @@ const args = process.argv.slice(2);
 const PER_MUSEUM = Number(args[args.indexOf("--per") + 1]) || 250;
 const DRY_RUN = args.includes("--dry-run");
 // 시카고 미술관 이미지 서버는 GitHub Actions 같은 데이터센터 IP를 403으로 막는다. 그런 환경에서는 --museums met로 돌린다.
+// --focus rare: 수집된 작품이 고요·평온 쪽으로 쏠려서, 적게 나온 감정이 나올 만한 주제어로 찾고
+// 그 감정 태그가 붙은 작품만 저장한다(나머지는 태깅만 하고 버림).
+const FOCUS_RARE = args.includes("--focus") && args[args.indexOf("--focus") + 1] === "rare";
+const RARE_TERMS = [
+  "battle", "storm", "shipwreck", "fire", "fury", "revenge", "fight", "temptation", // 분노·초조
+  "dance", "festival", "celebration", "wedding", "feast", "carnival", "children playing", "picnic", // 기쁨
+  "sunrise", "spring", "sailing", "harbor", "horse race", "flight", "rainbow", "dawn", // 자유·희망
+];
+const WANT_TAGS = new Set(FOCUS_RARE ? ["분노", "초조", "자유", "기쁨", "희망"] : []);
 const MUSEUMS = new Set((args.includes("--museums") ? args[args.indexOf("--museums") + 1] : "met,aic").split(",").map((v) => v.trim()));
 const USER_AGENT = "ARTMO student project (Ajou University web service course)";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -69,6 +78,20 @@ const MET = "https://collectionapi.metmuseum.org/public/collection";
 // 메트로폴리탄 작품 ID 순서: 유럽 회화(11)·미국관(1)·근현대(21)의 대표작 먼저, 그다음 부서 전체 목록.
 // v1/search는 2026-10-01에 종료되어 v1.1/search(offset·limit 페이지)와 v1/objects를 쓴다.
 async function* metIds(): AsyncGenerator<number> {
+  if (FOCUS_RARE) {
+    for (const term of RARE_TERMS) {
+      for (const dept of [11, 1, 21]) {
+        for (let offset = 0; offset < 300; offset += 100) {
+          const { objectIDs } = await getJson<{ objectIDs: number[] | null }>(
+            `${MET}/v1.1/search?q=${encodeURIComponent(term)}&departmentId=${dept}&hasImages=true&limit=100&offset=${offset}`,
+          );
+          if (!objectIDs?.length) break;
+          yield* objectIDs;
+        }
+      }
+    }
+    return;
+  }
   for (const dept of [11, 1, 21]) {
     for (let offset = 0; offset < 1000; offset += 100) {
       const { objectIDs } = await getJson<{ objectIDs: number[] | null }>(
@@ -199,6 +222,7 @@ async function collect(name: string, source: AsyncGenerator<Found>, existing: Se
         continue;
       }
       tagFailStreak = 0;
+      if (WANT_TAGS.size && !tagged.emotionTags.some((t) => WANT_TAGS.has(t))) { skip("원하는 감정 아님"); skipped++; continue; }
       const row = {
         source: art.source, source_id: art.sourceId, title: art.meta.title.slice(0, 300), artist: art.meta.artist.slice(0, 200),
         year: art.meta.year.slice(0, 50), medium: art.meta.medium.slice(0, 200), image_url: art.imageUrl, source_url: art.sourceUrl,
