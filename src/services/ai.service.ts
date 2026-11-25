@@ -172,11 +172,12 @@ export async function tagArtwork(
   meta: ArtworkMeta,
   image?: { mimeType: string; data: string },
   onError?: (error: unknown) => void,
+  model: string = taggingModel(),
 ): Promise<{ emotionTags: string[]; description: string } | null> {
   try {
     const parts: unknown[] = [{ text: JSON.stringify(meta) }];
     if (image) parts.push({ inlineData: image });
-    const raw = (await generateJson(taggingModel(), TAG_INSTRUCTION, tagSchema, parts, TAGGING_TIMEOUT_MS)) as Record<string, unknown>;
+    const raw = (await generateJson(model, TAG_INSTRUCTION, tagSchema, parts, TAGGING_TIMEOUT_MS)) as Record<string, unknown>;
     const emotionTags = cleanTags(raw.emotionTags);
     const description = safeText(raw.description, 400);
     if (emotionTags.length < 3 || !description) {

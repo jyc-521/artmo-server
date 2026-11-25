@@ -10,6 +10,7 @@
 import "dotenv/config";
 import { getSupabase } from "../src/config/supabase";
 import { tagArtwork, type ArtworkMeta } from "../src/services/ai.service";
+import { taggingModel } from "../src/config/gemini";
 
 const args = process.argv.slice(2);
 const PER_MUSEUM = Number(args[args.indexOf("--per") + 1]) || 250;
@@ -245,6 +246,13 @@ async function tagWithRetry(name: string, meta: ArtworkMeta, image: { mimeType: 
     await sleep(20_000 * retry);
     failure = "";
     tagged = await tagArtwork(meta, image, onError);
+  }
+  // 그래도 혼잡(503·500)이면 다른 모델로 한 번 더. 모델마다 혼잡도와 한도가 따로다.
+  const fallback = process.env.GEMINI_MODEL_TAGGING_FALLBACK?.trim() || "gemini-3.5-flash";
+  if (!tagged && /^(500|503)\b/.test(failure) && fallback !== taggingModel()) {
+    console.warn(`${name}: 혼잡이 계속되어 ${fallback}로 시도`);
+    failure = "";
+    tagged = await tagArtwork(meta, image, onError, fallback);
   }
   return { tagged, failure };
 }
