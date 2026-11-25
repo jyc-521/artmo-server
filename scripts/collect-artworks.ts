@@ -235,6 +235,70 @@ async function existingKeys(): Promise<Set<string>> {
   return keys;
 }
 
+// Gemini 태깅 + 429(한도)·500·503(혼잡)은 20초·40초·60초 쉬며 최대 3번 다시 시도
+async function tagWithRetry(name: string, meta: ArtworkMeta, image: { mimeType: string; data: string }) {
+  let failure = "";
+  const onError = (e: unknown) => { failure = geminiReason(e); };
+  let tagged = await tagArtwork(meta, image, onError);
+  for (let retry = 1; !tagged && retry <= 3 && /^(429|500|503)\b/.test(failure); retry++) {
+    console.warn(`${name}: Gemini ${failure.slice(0, 3)} → ${20 * retry}초 뒤 다시 시도`);
+    await sleep(20_000 * retry);
+    failure = "";
+    tagged = await tagArtwork(meta, image, onError);
+  }
+  return { tagged, failure };
+}
+
+// --retag: 예전 태깅 지시(고요·평온 쏠림)로 붙은 기존 작품의 태그·해설을 새 지시로 다시 붙인다.
+// RETAG_BEFORE보다 updated_at이 이른 미술관 작품만 대상이라, 중간에 멈춰도 다시 실행하면 남은 것부터 이어서 한다.
+const RETAG = args.includes("--retag");
+const RETAG_BEFORE = "2026-11-26T00:30:00+09:00"; // 새 태깅 지시를 올린 시각
+async function retag(): Promise<number> {
+  let done = 0;
+  let failStreak = 0;
+  const before: Record<string, number> = {};
+  const after: Record<string, number> = {};
+  let lastId = 0; // 이번 실행에서 실패한 작품을 다시 고르지 않도록 id 순서로만 앞으로 간다
+  for (;;) {
+    if (done >= PER_MUSEUM) break;
+    const { data, error } = await getSupabase().from("artworks")
+      .select("id, title, artist, year, medium, image_url, emotion_tags")
+      .in("source", ["met", "aic"]).lt("updated_at", RETAG_BEFORE).gt("id", lastId).order("id").limit(50);
+    if (error) throw new Error(`재태깅 대상 조회 실패: ${error.code ?? ""}`);
+    const rows = (data ?? []) as { id: number; title: string; artist: string; year: string; medium: string; image_url: string; emotion_tags: string[] }[];
+    if (!rows.length) { console.log("재태깅: 남은 작품 없음"); break; }
+    for (const r of rows) {
+      if (done >= PER_MUSEUM) break;
+      lastId = r.id;
+      const image = await fetchImage(r.image_url);
+      if (!image) { skip("재태깅: 이미지 실패"); continue; } // 이미지가 안 열리면 기존 태그 유지
+      const { tagged, failure } = await tagWithRetry("재태깅", { title: r.title, artist: r.artist, year: r.year, medium: r.medium }, image);
+      if (!tagged) {
+        skip(`Gemini: ${failure || "알 수 없음"}`);
+        if (++failStreak >= 10) { console.warn(`재태깅: 10번 연속 실패로 중단. 마지막 이유: ${failure || "알 수 없음"}. 다시 실행하면 이어서 합니다.`); return done; }
+        continue;
+      }
+      failStreak = 0;
+      for (const t of r.emotion_tags ?? []) before[t] = (before[t] ?? 0) + 1;
+      for (const t of tagged.emotionTags) after[t] = (after[t] ?? 0) + 1;
+      if (DRY_RUN) {
+        console.log(`[dry-run] ${r.id} ${r.title}: ${(r.emotion_tags ?? []).join(",")} → ${tagged.emotionTags.join(",")}`);
+      } else {
+        const { error: upErr } = await getSupabase().from("artworks").update({ emotion_tags: tagged.emotionTags, description: tagged.description }).eq("id", r.id);
+        if (upErr) { console.warn(`재태깅 저장 실패 ${r.id}: ${upErr.code ?? ""}`); continue; }
+      }
+      done++;
+      if (done % 25 === 0) console.log(`재태깅: ${done}/${PER_MUSEUM}`);
+      await sleep(4000);
+    }
+    if (DRY_RUN) break; // dry-run은 한 묶음만 보여 준다
+  }
+  const fmt = (o: Record<string, number>) => Object.entries(o).sort((x, y) => y[1] - x[1]).map(([k, v]) => `${k} ${v}`).join(", ");
+  console.log(`재태깅 전 태그: ${fmt(before)}`);
+  console.log(`재태깅 후 태그: ${fmt(after)}`);
+  return done;
+}
+
 async function collect(name: string, source: AsyncGenerator<Found>, existing: Set<string>) {
   let saved = 0;
   let skipped = 0;
@@ -247,17 +311,8 @@ async function collect(name: string, source: AsyncGenerator<Found>, existing: Se
       if (!art.isPublicDomain) { skipped++; continue; } // 자동 검증 2: 퍼블릭 도메인
       const image = await fetchImage(art.imageUrl);
       if (!image) { skipped++; continue; }
-      // 자동 검증 3: JSON 형식·허용 태그·해설 안전성. 분당 한도(429)면 잠시 쉬고 한 번 더 시도한다.
-      let failure = "";
-      const onError = (e: unknown) => { failure = geminiReason(e); };
-      let tagged = await tagArtwork(art.meta, image, onError);
-      // 429(한도)·500·503(Gemini 쪽 혼잡)은 잠시 뒤 풀리는 경우가 많아 20초·40초·60초 쉬며 최대 3번 다시 시도한다.
-      for (let retry = 1; !tagged && retry <= 3 && /^(429|500|503)\b/.test(failure); retry++) {
-        console.warn(`${name}: Gemini ${failure.slice(0, 3)} → ${20 * retry}초 뒤 다시 시도`);
-        await sleep(20_000 * retry);
-        failure = "";
-        tagged = await tagArtwork(art.meta, image, onError);
-      }
+      // 자동 검증 3: JSON 형식·허용 태그·해설 안전성
+      const { tagged, failure } = await tagWithRetry(name, art.meta, image);
       if (!tagged) {
         skip(`Gemini: ${failure || "알 수 없음"}`);
         skipped++;
@@ -294,6 +349,12 @@ async function collect(name: string, source: AsyncGenerator<Found>, existing: Se
 }
 
 async function main() {
+  if (RETAG) {
+    const n = await retag();
+    if (reasons.size) console.log("건너뛴 이유:", Object.fromEntries(reasons));
+    console.log(`완료: 재태깅 ${n}점${DRY_RUN ? " (dry-run, 저장 안 함)" : ""}`);
+    return;
+  }
   const existing = DRY_RUN ? new Set<string>() : await existingKeys();
   if (!DRY_RUN && (FOCUS_BALANCE || FOCUS_RARE)) await loadTagCounts();
   const met = MUSEUMS.has("met") ? await collect("메트로폴리탄", metPaintings(existing), existing) : 0;
