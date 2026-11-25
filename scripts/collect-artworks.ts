@@ -39,18 +39,25 @@ const TERMS_BY_TAG: Record<string, string[]> = {
 const RARE_TAGS = ["분노", "초조", "자유", "기쁨", "희망"];
 const tagCounts = new Map<string, number>(Object.keys(TERMS_BY_TAG).map((t) => [t, 0]));
 // 저장할 가치가 있는 감정: rare는 고정, balance는 지금 평균보다 적은 감정
+// 저장할 가치가 있는 감정: rare는 고정, balance는 지금 가장 적은 감정 6개
+// (평균 기준은 중간 감정까지 받아 줘서 고요·평온이 함께 계속 늘었다. 2026-11-25 실행 결과)
+const BALANCE_LOWEST = 6;
+function lowestTags(): string[] {
+  return [...tagCounts].sort((x, y) => x[1] - y[1]).map(([t]) => t);
+}
 function wantedTags(): Set<string> {
   if (FOCUS_RARE) return new Set(RARE_TAGS);
   if (!FOCUS_BALANCE) return new Set();
-  const counts = [...tagCounts.values()];
-  const avg = counts.reduce((x, y) => x + y, 0) / counts.length;
-  return new Set([...tagCounts].filter(([, n]) => n < avg).map(([t]) => t));
+  return new Set(lowestTags().slice(0, BALANCE_LOWEST));
 }
-// 주제어 순서: 지금 가장 적은 감정의 주제어부터
-function searchTerms(): string[] {
-  const tags = FOCUS_RARE ? RARE_TAGS : [...tagCounts].sort((x, y) => x[1] - y[1]).map(([t]) => t);
-  return [...new Set(tags.flatMap((t) => TERMS_BY_TAG[t] ?? []))];
+// 다음 검색 주제어: 지금 가장 적은 감정의 아직 안 쓴 주제어 (저장할 때마다 순위가 바뀌므로 매번 다시 고른다)
+const usedTerms = new Set<string>();
+function nextTerm(): string | undefined {
+  const tags = FOCUS_RARE ? RARE_TAGS : lowestTags();
+  for (const t of tags) for (const term of TERMS_BY_TAG[t] ?? []) if (!usedTerms.has(term)) return term;
+  return undefined;
 }
+
 async function loadTagCounts(): Promise<void> {
   for (let from = 0; ; from += 1000) {
     const { data, error } = await getSupabase().from("artworks").select("emotion_tags").range(from, from + 999);
@@ -114,7 +121,9 @@ const MET = "https://collectionapi.metmuseum.org/public/collection";
 // v1/search는 2026-10-01에 종료되어 v1.1/search(offset·limit 페이지)와 v1/objects를 쓴다.
 async function* metIds(): AsyncGenerator<number> {
   if (FOCUS_RARE || FOCUS_BALANCE) {
-    for (const term of searchTerms()) {
+    for (let term = nextTerm(); term; term = nextTerm()) {
+      usedTerms.add(term);
+      console.log(`주제어 "${term}" 검색`);
       for (const dept of [11, 1, 21]) {
         for (let offset = 0; offset < 300; offset += 100) {
           const { objectIDs } = await getJson<{ objectIDs: number[] | null }>(
