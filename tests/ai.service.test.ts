@@ -192,3 +192,13 @@ test("pickArtwork은 후보가 비어 있지 않을 때만 호출된다 (서비�
   const pick = await pickArtwork("문장입니다요", candidates, []);
   expect(pick).toEqual({ artworkId: 1, interpretation: "닮았어요", usedFallback: false });
 });
+
+test("기분 문장 분석 지시는 그림 태깅 지시와 다르다 (문장 기준, 몸 상태 포함)", async () => {
+  generateContent.mockResolvedValueOnce(reply({ emotionTags: ["허기", "지침", "짜증"], needsMoreDetail: false, hint: "" }));
+  const result = await analyzeEmotion("배고파서 죽을 지경이야");
+  const instruction = generateContent.mock.calls[0][0].config.systemInstruction as string;
+  expect(instruction).toContain("문장에서 가장 강하게");
+  expect(instruction).toContain("허기");
+  expect(instruction).not.toContain("화면 전체");
+  expect(result?.emotionTags).toEqual(["허기", "지침", "짜증"]);
+});

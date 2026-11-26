@@ -36,6 +36,10 @@ const TERMS_BY_TAG: Record<string, string[]> = {
   자유: ["sailing", "horse race", "birds", "open sea"], 경이: ["sublime", "glacier", "angels"],
   광활함: ["plains", "panorama", "desert"], 향수: ["village", "childhood", "homestead"],
   차가움: ["winter", "snow", "ice"], 몽환: ["dream", "mythology", "nymphs"],
+  허기: ["still life with fruit", "banquet", "market", "kitchen", "bread"], 지루함: ["idle", "waiting", "boredom"],
+  짜증: ["quarrel", "argument", "cardsharps"], 두려움: ["monster", "hell", "terror"],
+  유쾌함: ["merry company", "jester", "tavern", "laughing"], 부끄러움: ["modesty", "susanna", "blushing"],
+  후회: ["prodigal son", "penitent", "repentance"], 안도: ["return", "rescue", "homecoming"],
 };
 const RARE_TAGS = ["분노", "초조", "자유", "기쁨", "희망"];
 const tagCounts = new Map<string, number>(Object.keys(TERMS_BY_TAG).map((t) => [t, 0]));
@@ -260,7 +264,7 @@ async function tagWithRetry(name: string, meta: ArtworkMeta, image: { mimeType: 
 // --retag: 예전 태깅 지시(고요·평온 쏠림)로 붙은 기존 작품의 태그·해설을 새 지시로 다시 붙인다.
 // RETAG_BEFORE보다 updated_at이 이른 미술관 작품만 대상이라, 중간에 멈춰도 다시 실행하면 남은 것부터 이어서 한다.
 const RETAG = args.includes("--retag");
-const RETAG_BEFORE = "2026-11-26T00:30:00+09:00"; // 새 태깅 지시를 올린 시각
+const RETAG_BEFORE = "2026-11-26T16:30:00+09:00"; // 감정 8개 추가·태깅 지시 개선을 올린 시각 (이전 태그는 모두 다시)
 async function retag(): Promise<number> {
   let done = 0;
   let failStreak = 0;
