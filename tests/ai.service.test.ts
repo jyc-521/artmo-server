@@ -203,34 +203,44 @@ test("기분 문장 분석 지시는 그림 태깅 지시와 다르다 (문장 �
   expect(result?.emotionTags).toEqual(["허기", "지침", "짜증"]);
 });
 
-describe("위기 신호 문장 → 그림 대신 도움받을 곳 안내", () => {
+describe("위기 신호 문장 → 위로가 되는 그림 + 도움받을 곳을 조용히 함께", () => {
   test.each([
     "나는 아무에게도 도움이 되지 않나봐. 확 나가 죽어버려야 하나",
     "그냥 다 그만 살고 싶다",
     "요즘 자해 생각이 자꾸 나",
-  ])("키워드: %s → 200 needsSupport, Gemini 호출·기록 없음", async (sentence) => {
+  ])("키워드: %s → 201 그림, 위로 감정으로 후보 검색, support 포함, 분석 호출 생략", async (sentence) => {
+    jest.mocked(artworks.findCandidates).mockResolvedValueOnce([
+      { ...candidates[0], id: 7, title: "The Death of Socrates", score: 5 },
+      ...candidates,
+    ]);
+    generateContent.mockResolvedValueOnce(reply({ artworkId: 3, interpretation: "창가의 빛이 조용히 곁에 있어요." }));
     const res = await post(sentence);
-    expect(res.status).toBe(200);
-    expect(res.body.data.needsSupport).toBe(true);
-    expect(res.body.data.resources.map((r: { contact: string }) => r.contact)).toContain("109");
-    expect(res.body.data.artwork).toBeUndefined();
-    expect(generateContent).not.toHaveBeenCalled();
-    expect(inserted).toHaveLength(0);
-  });
-
-  test("키워드가 없어도 AI가 riskOfHarm이면 안내, 기록 없음", async () => {
-    generateContent.mockResolvedValueOnce(reply({ emotionTags: ["슬픔"], needsMoreDetail: false, hint: "", riskOfHarm: true }));
-    const res = await post("모든 게 영원히 끝났으면 좋겠어");
-    expect(res.status).toBe(200);
-    expect(res.body.data.needsSupport).toBe(true);
+    expect(res.status).toBe(201);
+    expect(res.body.data.artwork.id).toBe(3);
+    expect(res.body.data.support.resources.map((r: { contact: string }) => r.contact)).toContain("109");
+    expect(jest.mocked(artworks.findCandidates).mock.calls[0][0]).toEqual(["따뜻함", "안도", "희망", "사랑", "평온"]);
+    // 분석 없이 고르기 1번만, 위로 지시가 붙고, 무거운 제목 작품은 후보에서 빠진다
     expect(generateContent).toHaveBeenCalledTimes(1);
-    expect(inserted).toHaveLength(0);
+    const call = generateContent.mock.calls[0][0];
+    expect(call.config.systemInstruction).toContain("곁에 있어 주는 그림");
+    expect(JSON.stringify(call.contents)).not.toContain("Socrates");
+    expect(inserted).toHaveLength(1);
   });
 
-  test.each(["배고파서 죽을 지경이야", "웃겨 죽겠다 진짜", "과제 때문에 미쳐버릴 것 같아"])("세기를 나타내는 표현 %s → 평소처럼 추천", async (sentence) => {
+  test("키워드가 없어도 AI가 riskOfHarm이면 위로 그림 + support", async () => {
+    generateContent
+      .mockResolvedValueOnce(reply({ emotionTags: ["슬픔"], needsMoreDetail: false, hint: "", riskOfHarm: true }))
+      .mockResolvedValueOnce(reply({ artworkId: 3, interpretation: "곁에 있어요." }));
+    const res = await post("모든 게 영원히 끝났으면 좋겠어");
+    expect(res.status).toBe(201);
+    expect(res.body.data.support).toBeDefined();
+    expect(jest.mocked(artworks.findCandidates).mock.calls[0][0]).toContain("따뜻함");
+  });
+
+  test.each(["배고파서 죽을 지경이야", "웃겨 죽겠다 진짜", "과제 때문에 미쳐버릴 것 같아"])("세기를 나타내는 표현 %s → 평소 추천, support 없음", async (sentence) => {
     generateContent.mockResolvedValueOnce(goodAnalysis).mockResolvedValueOnce(reply({ artworkId: 3, interpretation: "닮았어요." }));
     const res = await post(sentence);
     expect(res.status).toBe(201);
-    expect(res.body.data.needsSupport).toBeUndefined();
+    expect(res.body.data.support).toBeUndefined();
   });
 });

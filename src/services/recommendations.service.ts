@@ -6,9 +6,12 @@ import { hasRiskKeyword } from "./support.service";
 import * as artworks from "./artworks.service";
 
 export type CreateResult =
-  | { needsSupport: true }
   | { needsMoreDetail: true; hint: string }
-  | { needsMoreDetail: false; recommendation: Recommendation };
+  | { needsMoreDetail: false; recommendation: Recommendation; support: boolean };
+
+// 위로가 필요한 문장에 고르는 감정과, 그런 순간에 내보이지 않을 작품 제목(죽음·처형 장면 등)
+const COMFORT_TAGS = ["따뜻함", "안도", "희망", "사랑", "평온"];
+const HEAVY_TITLE = /death|dead|dying|suicide|martyr|execution|crucifixion|entombment|lamentation|pietà|pieta|lucretia|cleopatra|ophelia|skull|vanitas|massacre|murder|죽음/i;
 
 type RowWithArtwork = RecommendationRow & { artworks: ArtworkRow | null };
 
@@ -27,18 +30,19 @@ function toRecommendation(row: RowWithArtwork, viewerId?: string) {
 export type Recommendation = ReturnType<typeof toRecommendation>;
 
 export async function createRecommendation(sentence: string, userId?: string): Promise<CreateResult> {
-  // 위기 신호: 키워드는 AI 호출 전에 바로, AI 판단은 결과로 확인한다. 기록은 남기지 않는다.
-  if (hasRiskKeyword(sentence)) return { needsSupport: true };
-  const analysis = await ai.analyzeEmotion(sentence);
-  if (analysis?.riskOfHarm) return { needsSupport: true };
-  if (analysis?.needsMoreDetail) return { needsMoreDetail: true, hint: analysis.hint };
+  // 위기 신호(키워드 또는 AI 판단): 사용자가 원하는 위로가 되는 그림을 주고, 도움받을 곳은 화면에 조용히 함께 보인다.
+  const keywordRisk = hasRiskKeyword(sentence);
+  const analysis = keywordRisk ? null : await ai.analyzeEmotion(sentence);
+  const support = keywordRisk || analysis?.riskOfHarm === true;
+  if (!support && analysis?.needsMoreDetail) return { needsMoreDetail: true, hint: analysis.hint };
 
-  const tags = analysis?.emotionTags ?? [];
+  const tags = support ? COMFORT_TAGS : analysis?.emotionTags ?? [];
   let candidates = tags.length ? await artworks.findCandidates(tags, 10) : [];
+  if (support) candidates = candidates.filter((c) => !HEAVY_TITLE.test(c.title));
   if (!candidates.length) candidates = await artworks.representativeCandidates(10);
   if (!candidates.length) throw new HttpError(503, "추천할 작품이 아직 준비되지 않았습니다.");
 
-  const pick = await ai.pickArtwork(sentence, candidates, tags);
+  const pick = await ai.pickArtwork(sentence, candidates, tags, support);
   const { data, error } = await getSupabase()
     .from("recommendations")
     .insert({
@@ -47,12 +51,12 @@ export async function createRecommendation(sentence: string, userId?: string): P
       emotion_tags: tags,
       artwork_id: pick.artworkId,
       interpretation: pick.interpretation,
-      used_fallback: pick.usedFallback || !analysis,
+      used_fallback: pick.usedFallback || (!analysis && !keywordRisk),
     })
     .select("*, artworks(*)")
     .single();
   if (error) throwDatabaseError(error);
-  return { needsMoreDetail: false, recommendation: toRecommendation(data as RowWithArtwork, userId) };
+  return { needsMoreDetail: false, recommendation: toRecommendation(data as RowWithArtwork, userId), support };
 }
 
 export async function getRecommendation(id: string, viewerId?: string): Promise<Recommendation> {
