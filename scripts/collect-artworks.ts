@@ -36,7 +36,7 @@ const TERMS_BY_TAG: Record<string, string[]> = {
   자유: ["sailing", "horse race", "birds", "open sea"], 경이: ["sublime", "glacier", "angels"],
   광활함: ["plains", "panorama", "desert"], 향수: ["village", "childhood", "homestead"],
   차가움: ["winter", "snow", "ice"], 몽환: ["dream", "mythology", "nymphs"],
-  허기: ["still life with fruit", "banquet", "market", "kitchen", "bread"], 지루함: ["idle", "waiting", "boredom"],
+  허기: ["harvesters resting", "noonday rest", "weary traveler", "peasants meal", "waiting for dinner", "pilgrims"], 지루함: ["idle", "waiting", "boredom"],
   짜증: ["quarrel", "argument", "cardsharps"], 두려움: ["monster", "hell", "terror"],
   유쾌함: ["merry company", "jester", "tavern", "laughing"], 부끄러움: ["modesty", "susanna", "blushing"],
   후회: ["prodigal son", "penitent", "repentance"], 안도: ["return", "rescue", "homecoming"],
