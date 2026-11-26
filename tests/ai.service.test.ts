@@ -202,3 +202,35 @@ test("기분 문장 분석 지시는 그림 태깅 지시와 다르다 (문장 �
   expect(instruction).not.toContain("화면 전체");
   expect(result?.emotionTags).toEqual(["허기", "지침", "짜증"]);
 });
+
+describe("위기 신호 문장 → 그림 대신 도움받을 곳 안내", () => {
+  test.each([
+    "나는 아무에게도 도움이 되지 않나봐. 확 나가 죽어버려야 하나",
+    "그냥 다 그만 살고 싶다",
+    "요즘 자해 생각이 자꾸 나",
+  ])("키워드: %s → 200 needsSupport, Gemini 호출·기록 없음", async (sentence) => {
+    const res = await post(sentence);
+    expect(res.status).toBe(200);
+    expect(res.body.data.needsSupport).toBe(true);
+    expect(res.body.data.resources.map((r: { contact: string }) => r.contact)).toContain("109");
+    expect(res.body.data.artwork).toBeUndefined();
+    expect(generateContent).not.toHaveBeenCalled();
+    expect(inserted).toHaveLength(0);
+  });
+
+  test("키워드가 없어도 AI가 riskOfHarm이면 안내, 기록 없음", async () => {
+    generateContent.mockResolvedValueOnce(reply({ emotionTags: ["슬픔"], needsMoreDetail: false, hint: "", riskOfHarm: true }));
+    const res = await post("모든 게 영원히 끝났으면 좋겠어");
+    expect(res.status).toBe(200);
+    expect(res.body.data.needsSupport).toBe(true);
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    expect(inserted).toHaveLength(0);
+  });
+
+  test.each(["배고파서 죽을 지경이야", "웃겨 죽겠다 진짜", "과제 때문에 미쳐버릴 것 같아"])("세기를 나타내는 표현 %s → 평소처럼 추천", async (sentence) => {
+    generateContent.mockResolvedValueOnce(goodAnalysis).mockResolvedValueOnce(reply({ artworkId: 3, interpretation: "닮았어요." }));
+    const res = await post(sentence);
+    expect(res.status).toBe(201);
+    expect(res.body.data.needsSupport).toBeUndefined();
+  });
+});

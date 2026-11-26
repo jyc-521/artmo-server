@@ -18,6 +18,7 @@ export interface EmotionAnalysis {
   emotionTags: string[];
   needsMoreDetail: boolean;
   hint: string;
+  riskOfHarm: boolean;
 }
 
 export interface Candidate {
@@ -43,6 +44,7 @@ const ANALYZE_INSTRUCTION = [
   `emotionTags는 다음 목록에서만 3~5개, 문장에서 가장 강하게 드러나는 감정·상태부터 순서대로 고른다: ${ALLOWED_TAGS.join(", ")}.`,
   "몸 상태도 기분으로 본다: 배고픔·먹고 싶음은 허기, 피곤은 지침, 졸림은 나른함, 심심함은 지루함, 무서움은 두려움.",
   "'죽을 지경', '미치겠다' 같은 과장 표현은 감정의 세기로 읽는다. 문장을 글자 그대로가 아니라 그 말을 하는 사람의 상태로 읽는다: 기운이 얼마나 빠졌는지, 얼마나 급한지, 예민해졌는지, 엄살·유머가 섞였는지. 예: '배고파 죽겠다'는 허기와 함께 기운이 바닥난 지침, 빨리 먹고 싶은 초조, 예민해진 짜증을 고른다. '떡볶이 먹고 싶다~'처럼 가볍고 들뜬 배고픔은 허기와 설렘을 고른다. 기운이 넘치는 과장도 같다: '그녀에게 별도 따줄 수 있을 것 같아'는 사랑·설렘·벅참·기쁨이고, 차분한 사랑과 구분한다.",
+  "riskOfHarm은 죽고 싶다, 사라지고 싶다, 스스로를 해치고 싶다는 마음이 드러날 때만 true다. 자기 비하 뒤에 붙은 반쯤 농담 같은 말('아무 쓸모없나 봐, 확 죽어버릴까')도 true로 본다. '배고파 죽겠다', '웃겨 죽겠다', '미치겠다'처럼 세기를 나타내는 표현은 false다.",
   "문장에 감정이나 분위기가 거의 드러나지 않으면 needsMoreDetail을 true로 하고, hint에 더 써 볼 방향을 80자 이내 한국어 질문으로 쓴다.",
 ].join("\n");
 
@@ -71,8 +73,9 @@ const analyzeSchema: Schema = {
     emotionTags: { type: Type.ARRAY, items: { type: Type.STRING, enum: [...ALLOWED_TAGS] } },
     needsMoreDetail: { type: Type.BOOLEAN },
     hint: { type: Type.STRING },
+    riskOfHarm: { type: Type.BOOLEAN },
   },
-  required: ["emotionTags", "needsMoreDetail", "hint"],
+  required: ["emotionTags", "needsMoreDetail", "hint", "riskOfHarm"],
 };
 
 const pickSchema: Schema = {
@@ -133,7 +136,7 @@ export async function analyzeEmotion(sentence: string): Promise<EmotionAnalysis 
     // 허용 목록 밖 태그만 왔다면 needsMoreDetail은 그대로 두고, 호출한 쪽이 대표 작품으로 대체한다.
     const needsMoreDetail = raw.needsMoreDetail === true;
     const hint = safeText(raw.hint, HINT_MAX) ?? FALLBACK_HINT;
-    return { emotionTags, needsMoreDetail, hint };
+    return { emotionTags, needsMoreDetail, hint, riskOfHarm: raw.riskOfHarm === true };
   } catch {
     // 시간 초과·형식 오류: 호출한 쪽이 기본 흐름으로 처리한다. 원문 오류는 밖으로 내보내지 않는다.
     return null;

@@ -2,9 +2,11 @@ import { getSupabase, throwDatabaseError } from "../config/supabase";
 import type { ArtworkRow, RecommendationRow } from "../types/database.types";
 import HttpError from "../utils/httpError";
 import * as ai from "./ai.service";
+import { hasRiskKeyword } from "./support.service";
 import * as artworks from "./artworks.service";
 
 export type CreateResult =
+  | { needsSupport: true }
   | { needsMoreDetail: true; hint: string }
   | { needsMoreDetail: false; recommendation: Recommendation };
 
@@ -25,7 +27,10 @@ function toRecommendation(row: RowWithArtwork, viewerId?: string) {
 export type Recommendation = ReturnType<typeof toRecommendation>;
 
 export async function createRecommendation(sentence: string, userId?: string): Promise<CreateResult> {
+  // 위기 신호: 키워드는 AI 호출 전에 바로, AI 판단은 결과로 확인한다. 기록은 남기지 않는다.
+  if (hasRiskKeyword(sentence)) return { needsSupport: true };
   const analysis = await ai.analyzeEmotion(sentence);
+  if (analysis?.riskOfHarm) return { needsSupport: true };
   if (analysis?.needsMoreDetail) return { needsMoreDetail: true, hint: analysis.hint };
 
   const tags = analysis?.emotionTags ?? [];

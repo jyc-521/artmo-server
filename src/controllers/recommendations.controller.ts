@@ -1,10 +1,15 @@
 import asyncHandler from "../utils/asyncHandler";
 import { objectBody, sentenceField, uuid } from "../utils/input";
 import * as recommendations from "../services/recommendations.service";
+import { SUPPORT_MESSAGE, SUPPORT_RESOURCES } from "../services/support.service";
 
 export const create = asyncHandler(async (req, res) => {
   const sentence = sentenceField(objectBody(req.body).sentence);
   const result = await recommendations.createRecommendation(sentence, req.auth?.id);
+  if ("needsSupport" in result) {
+    res.status(200).json({ data: { needsSupport: true, needsMoreDetail: false, message: SUPPORT_MESSAGE, resources: SUPPORT_RESOURCES } });
+    return;
+  }
   if (result.needsMoreDetail) {
     res.status(200).json({ data: { needsMoreDetail: true, hint: result.hint } });
     return;
