@@ -9,8 +9,9 @@ export type CreateResult =
   | { needsMoreDetail: true; hint: string }
   | { needsMoreDetail: false; recommendation: Recommendation; support: boolean };
 
-// 위로가 필요한 문장에 고르는 감정과, 그런 순간에 내보이지 않을 작품 제목(죽음·처형 장면 등)
-const COMFORT_TAGS = ["따뜻함", "안도", "희망", "사랑", "평온"];
+// 위기 신호 문장에서 분석이 실패했을 때 쓰는 감정, 그리고 그런 순간에 내보이지 않을 작품 제목(죽음·처형 장면 등).
+// 마음을 닮은 그림은 주되, 죽음 자체를 그린 그림은 주지 않는다.
+const SUPPORT_FALLBACK_TAGS = ["슬픔", "고독", "지침", "쓸쓸함"];
 const HEAVY_TITLE = /death|dead|dying|suicide|martyr|execution|crucifixion|entombment|lamentation|pietà|pieta|lucretia|cleopatra|ophelia|skull|vanitas|massacre|murder|죽음/i;
 
 type RowWithArtwork = RecommendationRow & { artworks: ArtworkRow | null };
@@ -30,13 +31,14 @@ function toRecommendation(row: RowWithArtwork, viewerId?: string) {
 export type Recommendation = ReturnType<typeof toRecommendation>;
 
 export async function createRecommendation(sentence: string, userId?: string): Promise<CreateResult> {
-  // 위기 신호(키워드 또는 AI 판단): 사용자가 원하는 위로가 되는 그림을 주고, 도움받을 곳은 화면에 조용히 함께 보인다.
+  // 위기 신호(키워드 또는 AI 판단): 다른 문장처럼 마음을 닮은 그림을 주고, 도움받을 곳은 화면에 조용히 함께 보인다.
   const keywordRisk = hasRiskKeyword(sentence);
-  const analysis = keywordRisk ? null : await ai.analyzeEmotion(sentence);
+  const analysis = await ai.analyzeEmotion(sentence);
   const support = keywordRisk || analysis?.riskOfHarm === true;
   if (!support && analysis?.needsMoreDetail) return { needsMoreDetail: true, hint: analysis.hint };
 
-  const tags = support ? COMFORT_TAGS : analysis?.emotionTags ?? [];
+  const analyzed = analysis?.emotionTags ?? [];
+  const tags = support && !analyzed.length ? SUPPORT_FALLBACK_TAGS : analyzed;
   let candidates = tags.length ? await artworks.findCandidates(tags, 10) : [];
   if (support) candidates = candidates.filter((c) => !HEAVY_TITLE.test(c.title));
   if (!candidates.length) candidates = await artworks.representativeCandidates(10);
@@ -51,7 +53,7 @@ export async function createRecommendation(sentence: string, userId?: string): P
       emotion_tags: tags,
       artwork_id: pick.artworkId,
       interpretation: pick.interpretation,
-      used_fallback: pick.usedFallback || (!analysis && !keywordRisk),
+      used_fallback: pick.usedFallback || !analysis,
     })
     .select("*, artworks(*)")
     .single();
