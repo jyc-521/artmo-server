@@ -314,6 +314,50 @@ async function retag(): Promise<number> {
   return done;
 }
 
+// --trim: 감정 하나당 TAG_CAP개를 넘은 감정을 줄인다(Gemini 안 씀). 그림은 지우지 않고,
+// 그 감정이 가장 약하게(뒤 순위로) 붙은 그림부터 태그만 뗀다. 태그는 강한 순서로 저장돼 있다.
+// 1차: 떼고 나서도 감정이 2개 이상 남는 그림만, 2차: 1개 이상 남는 그림까지.
+const TRIM = args.includes("--trim");
+async function trimOverCap(): Promise<number> {
+  const rows: { id: number; emotion_tags: string[] }[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await getSupabase().from("artworks").select("id, emotion_tags").order("id").range(from, from + 999);
+    if (error) throw new Error(`작품 조회 실패: ${error.code ?? ""}`);
+    rows.push(...(data as { id: number; emotion_tags: string[] }[]));
+    if (data.length < 1000) break;
+  }
+  const count = new Map<string, number>();
+  for (const r of rows) for (const t of r.emotion_tags ?? []) count.set(t, (count.get(t) ?? 0) + 1);
+  const before = Object.fromEntries([...count].filter(([, n]) => n > TAG_CAP));
+  const changed = new Map<number, string[]>();
+  const tagsOf = (r: { id: number; emotion_tags: string[] }) => changed.get(r.id) ?? r.emotion_tags ?? [];
+  for (const minLeft of [2, 1]) {
+    for (const [tag] of [...count].filter(([, n]) => n > TAG_CAP).sort((x, y) => y[1] - x[1])) {
+      // 그 감정이 뒤 순위에 있는 그림부터
+      const holders = rows.filter((r) => tagsOf(r).includes(tag)).sort((a, b) => tagsOf(b).indexOf(tag) - tagsOf(a).indexOf(tag));
+      for (const r of holders) {
+        if ((count.get(tag) ?? 0) <= TAG_CAP) break;
+        const tags = tagsOf(r);
+        if (tags.length - 1 < minLeft) continue;
+        changed.set(r.id, tags.filter((t) => t !== tag));
+        count.set(tag, (count.get(tag) ?? 0) - 1);
+      }
+    }
+  }
+  const after = Object.fromEntries(Object.keys(before).map((t) => [t, count.get(t) ?? 0]));
+  console.log(`상한 ${TAG_CAP} 넘은 감정(전): ${JSON.stringify(before)}`);
+  console.log(`정리 후: ${JSON.stringify(after)}  · 태그가 바뀌는 그림 ${changed.size}점`);
+  if (!DRY_RUN) {
+    let n = 0;
+    for (const [id, tags] of changed) {
+      const { error } = await getSupabase().from("artworks").update({ emotion_tags: tags }).eq("id", id);
+      if (error) console.warn(`정리 실패 ${id}: ${error.code ?? ""}`); else n++;
+    }
+    console.log(`저장: ${n}점`);
+  }
+  return changed.size;
+}
+
 async function collect(name: string, source: AsyncGenerator<Found>, existing: Set<string>) {
   let saved = 0;
   let skipped = 0;
@@ -366,6 +410,11 @@ async function collect(name: string, source: AsyncGenerator<Found>, existing: Se
 }
 
 async function main() {
+  if (TRIM) {
+    const n = await trimOverCap();
+    console.log(`완료: 상한 정리 ${n}점${DRY_RUN ? " (dry-run, 저장 안 함)" : ""}`);
+    return;
+  }
   if (RETAG) {
     const n = await retag();
     if (reasons.size) console.log("건너뛴 이유:", Object.fromEntries(reasons));

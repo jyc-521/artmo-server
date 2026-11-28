@@ -18,9 +18,9 @@ on:
         default: "met"
         required: true
       focus:
-        description: "balance=감정 골고루 새로 수집(권장), rare=분노·초조·자유·기쁨·희망만, retag=기존 작품 태그 다시 붙이기, none=제한 없음"
+        description: "balance=감정 골고루 새로 수집(권장), rare=분노·초조·자유·기쁨·희망만, retag=기존 작품 태그 다시 붙이기, trim=100개 넘은 감정 줄이기(Gemini 안 씀), none=제한 없음"
         type: choice
-        options: [balance, rare, retag, none]
+        options: [balance, rare, retag, trim, none]
         default: balance
       model:
         description: "태깅 모델 (비우면 gemini-3.5-flash)"
@@ -62,7 +62,7 @@ jobs:
           case "$MUSEUMS" in met|aic|met,aic|aic,met) ;; *) echo "museums는 met, aic, met,aic 중 하나"; exit 1;; esac
           case "$PER" in ''|*[!0-9]*) echo "per는 숫자만 넣으세요"; exit 1;; esac
           EXTRA=""
-          case "$FOCUS" in balance|rare) EXTRA="--focus $FOCUS";; retag) EXTRA="--retag";; none|'') ;; *) echo "focus 값 오류"; exit 1;; esac
+          case "$FOCUS" in balance|rare) EXTRA="--focus $FOCUS";; retag) EXTRA="--retag";; trim) EXTRA="--trim";; none|'') ;; *) echo "focus 값 오류"; exit 1;; esac
           if [ "$DRY_RUN" = "true" ]; then
             npm run collect:artworks -- --per "$PER" --museums "$MUSEUMS" $EXTRA --dry-run
           else
