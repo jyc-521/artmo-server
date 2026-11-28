@@ -47,6 +47,9 @@ const tagCounts = new Map<string, number>(Object.keys(TERMS_BY_TAG).map((t) => [
 // 저장할 가치가 있는 감정: rare는 고정, balance는 지금 가장 적은 감정 6개
 // (평균 기준은 중간 감정까지 받아 줘서 고요·평온이 함께 계속 늘었다. 2026-11-25 실행 결과)
 const BALANCE_LOWEST = 6;
+// 감정 하나당 작품 수 상한(사용자 결정 2026-11-28). 새 작품에서 이미 상한에 닿은 감정 태그는 빼고 저장하고,
+// 남는 감정이 없으면 저장하지 않는다. --cap N 으로 바꿀 수 있다.
+const TAG_CAP = args.includes("--cap") ? Number(args[args.indexOf("--cap") + 1]) : 100;
 function lowestTags(): string[] {
   return [...tagCounts].sort((x, y) => x[1] - y[1]).map(([t]) => t);
 }
@@ -335,10 +338,12 @@ async function collect(name: string, source: AsyncGenerator<Found>, existing: Se
       tagFailStreak = 0;
       const want = wantedTags();
       if (want.size && !tagged.emotionTags.some((t) => want.has(t))) { skip("이미 많은 감정만 나옴"); skipped++; continue; }
+      const kept = tagged.emotionTags.filter((t) => (tagCounts.get(t) ?? 0) < TAG_CAP);
+      if (!kept.length) { skip(`모든 감정이 ${TAG_CAP}개 상한`); skipped++; continue; }
       const row = {
         source: art.source, source_id: art.sourceId, title: art.meta.title.slice(0, 300), artist: art.meta.artist.slice(0, 200),
         year: art.meta.year.slice(0, 50), medium: art.meta.medium.slice(0, 200), image_url: art.imageUrl, source_url: art.sourceUrl,
-        emotion_tags: tagged.emotionTags, description: tagged.description, is_public_domain: true,
+        emotion_tags: kept, description: tagged.description, is_public_domain: true,
       };
       if (DRY_RUN) {
         console.log(`[dry-run] ${name} ${art.sourceId} ${row.title} → ${row.emotion_tags.join(", ")}`);
@@ -368,7 +373,7 @@ async function main() {
     return;
   }
   const existing = DRY_RUN ? new Set<string>() : await existingKeys();
-  if (!DRY_RUN && (FOCUS_BALANCE || FOCUS_RARE)) await loadTagCounts();
+  if (!DRY_RUN) await loadTagCounts(); // 감정별 상한 확인에 필요(모든 수집 모드)
   const met = MUSEUMS.has("met") ? await collect("메트로폴리탄", metPaintings(existing), existing) : 0;
   const aic = MUSEUMS.has("aic") ? await collect("시카고", aicPaintings(), existing) : 0;
   if (reasons.size) console.log("건너뛴 이유:", Object.fromEntries(reasons));
