@@ -16,7 +16,8 @@
     "test": "jest --runInBand && npm run test:sql",
     "test:sql": "node --import tsx --test tests/schema.postgres.ts",
     "collect:artworks": "tsx scripts/collect-artworks.ts",
-    "db:check": "tsx scripts/check-db.ts"
+    "db:check": "tsx scripts/check-db.ts",
+    "eval:emotions": "tsx scripts/eval-emotions.ts"
   },
   "dependencies": {
     "@google/genai": "3.6.1",
