@@ -12,7 +12,7 @@ export type CreateResult =
 // 위기 신호 문장에서 분석이 실패했을 때 쓰는 감정, 그리고 그런 순간에 내보이지 않을 작품 제목(죽음·처형 장면 등).
 // 마음을 닮은 그림은 주되, 죽음 자체를 그린 그림은 주지 않는다.
 const SUPPORT_FALLBACK_TAGS = ["슬픔", "고독", "지침", "쓸쓸함"];
-const HEAVY_TITLE = /death|dead|dying|suicide|martyr|execution|crucifixion|entombment|lamentation|pietà|pieta|lucretia|cleopatra|ophelia|medea|judith|holofernes|salome|sebastian|skull|vanitas|massacre|murder|죽음/i;
+const HEAVY_TITLE = /death|dead|dying|suicide|martyr|execution|crucifixion|entombment|lamentation|pietà|pieta|lucretia|cleopatra|ophelia|medea|man of sorrows|wounds|judith|holofernes|salome|sebastian|skull|vanitas|massacre|murder|죽음/i;
 
 type RowWithArtwork = RecommendationRow & { artworks: ArtworkRow | null };
 
