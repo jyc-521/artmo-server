@@ -98,7 +98,19 @@ const tagSchema: Schema = {
   required: ["emotionTags", "description"],
 };
 
+// Gemini 쪽 일시 오류(500·503)는 한 번만 잠깐 쉬고 다시 시도한다. 시간 초과·한도(429)는 바로 대체 흐름으로.
 async function generateJson(model: string, systemInstruction: string, responseSchema: Schema, parts: unknown[], timeoutMs = GEMINI_TIMEOUT_MS): Promise<unknown> {
+  try {
+    return await generateJsonOnce(model, systemInstruction, responseSchema, parts, timeoutMs);
+  } catch (error) {
+    const status = (error as { status?: unknown })?.status;
+    if (status !== 500 && status !== 503) throw error;
+    await new Promise((r) => setTimeout(r, 1500));
+    return generateJsonOnce(model, systemInstruction, responseSchema, parts, timeoutMs);
+  }
+}
+
+async function generateJsonOnce(model: string, systemInstruction: string, responseSchema: Schema, parts: unknown[], timeoutMs: number): Promise<unknown> {
   const response = await getGemini().models.generateContent({
     model,
     contents: [{ role: "user", parts: parts as never }],
@@ -129,9 +141,17 @@ export function safeText(value: unknown, max: number): string | null {
   return text;
 }
 
+// 받침이 있으면 true (한글이 아니면 받침 없음으로 본다)
+function hasBatchim(word: string): boolean {
+  const code = word.charCodeAt(word.length - 1) - 0xac00;
+  return code >= 0 && code <= 11171 && code % 28 !== 0;
+}
+
 export function defaultInterpretation(candidate: Pick<Candidate, "title" | "artist">, tags: string[]): string {
-  const mood = tags.length ? tags.slice(0, 2).join("과 ") : "지금의 기분";
-  return `${candidate.artist}의 「${candidate.title}」에는 ${mood}이 함께 담겨 있어요. 오늘의 문장과 나란히 놓고 천천히 바라보세요.`.slice(0, INTERPRETATION_MAX);
+  const [a, b] = tags;
+  const mood = !a ? "지금의 기분" : b ? `${a}${hasBatchim(a) ? "과" : "와"} ${b}` : a;
+  const subject = hasBatchim(mood) ? "이" : "가";
+  return `${candidate.artist}의 「${candidate.title}」에는 ${mood}${subject} 함께 담겨 있어요. 오늘의 문장과 나란히 놓고 천천히 바라보세요.`.slice(0, INTERPRETATION_MAX);
 }
 
 export async function analyzeEmotion(sentence: string): Promise<EmotionAnalysis | null> {

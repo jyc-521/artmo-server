@@ -8,7 +8,7 @@ const genai: typeof GenAI = require("@google/genai");
 export const Type = genai.Type;
 export type Schema = GenAI.Schema;
 
-export const GEMINI_TIMEOUT_MS = 10_000;
+export const GEMINI_TIMEOUT_MS = 15_000; // 2026-11-28 실측: flash-lite가 10초를 자주 넘겨 대체 흐름으로 빠짐
 
 export function recommendModel(): string {
   return process.env.GEMINI_MODEL_RECOMMEND?.trim() || "gemini-3.1-flash-lite";

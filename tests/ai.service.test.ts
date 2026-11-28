@@ -251,3 +251,25 @@ describe("위기 신호 문장 → 마음을 닮은 그림 + 도움받을 곳을
     expect(res.body.data.support).toBeUndefined();
   });
 });
+
+test("기본 해설은 받침에 맞는 조사를 쓴다", () => {
+  const art = { title: "T", artist: "A" };
+  expect(defaultInterpretation(art, ["허기", "지침"])).toContain("허기와 지침이 함께");
+  expect(defaultInterpretation(art, ["사랑", "설렘"])).toContain("사랑과 설렘이 함께");
+  expect(defaultInterpretation(art, ["고독"])).toContain("고독이 함께");
+  expect(defaultInterpretation(art, ["나른함", "몽환"])).toContain("나른함과 몽환이 함께");
+  expect(defaultInterpretation(art, ["설렘", "기쁨"])).toContain("설렘과 기쁨이 함께");
+  expect(defaultInterpretation(art, [])).toContain("지금의 기분이 함께");
+  expect(defaultInterpretation(art, ["지루함", "허기"])).toContain("지루함과 허기가 함께");
+});
+
+test("Gemini 503이면 한 번 다시 시도해 성공", async () => {
+  generateContent
+    .mockRejectedValueOnce(Object.assign(new Error("busy"), { status: 503 }))
+    .mockResolvedValueOnce(goodAnalysis)
+    .mockResolvedValueOnce(reply({ artworkId: 3, interpretation: "닮았어요." }));
+  const res = await post("오늘따라 마음이 텅 빈 것 같아");
+  expect(res.status).toBe(201);
+  expect(res.body.data.artwork.id).toBe(3);
+  expect(generateContent).toHaveBeenCalledTimes(3);
+});
